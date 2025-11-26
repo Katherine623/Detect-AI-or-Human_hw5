@@ -251,10 +251,12 @@ with st.sidebar:
     
     st.header("📝 範例文章")
     if st.button("載入 AI 文章範例"):
-        st.session_state.example_text = """Artificial intelligence has revolutionized numerous industries in recent years. Machine learning algorithms can now process vast amounts of data with unprecedented efficiency. These technological advancements have enabled computers to perform tasks that were once exclusively human domains. From natural language processing to image recognition, AI systems continue to demonstrate remarkable capabilities. The integration of deep learning techniques has particularly enhanced the performance of these systems."""
+        st.session_state.text_input = """Artificial intelligence has revolutionized numerous industries in recent years. Machine learning algorithms can now process vast amounts of data with unprecedented efficiency. These technological advancements have enabled computers to perform tasks that were once exclusively human domains. From natural language processing to image recognition, AI systems continue to demonstrate remarkable capabilities. The integration of deep learning techniques has particularly enhanced the performance of these systems."""
+        st.rerun()
     
     if st.button("載入人類文章範例"):
-        st.session_state.example_text = """I remember the first time I tried to write an essay. It was tough! My thoughts were all over the place, and I couldn't figure out how to organize them. But you know what? That's totally normal. Writing is messy. Sometimes I'd write a sentence, hate it, delete it, then write it again almost the same way. That's just how it goes, right?"""
+        st.session_state.text_input = """I remember the first time I tried to write an essay. It was tough! My thoughts were all over the place, and I couldn't figure out how to organize them. But you know what? That's totally normal. Writing is messy. Sometimes I'd write a sentence, hate it, delete it, then write it again almost the same way. That's just how it goes, right?"""
+        st.rerun()
 
 # 主要內容區域
 col1, col2 = st.columns([2, 1])
@@ -263,10 +265,9 @@ with col1:
     st.header("📝 輸入文章")
     
     # 文字輸入區
-    default_text = st.session_state.get('example_text', '')
     text_input = st.text_area(
         "請輸入或貼上要檢測的文章內容：",
-        value=default_text,
+        value=st.session_state.get('text_input', ''),
         height=300,
         placeholder="在這裡輸入文章內容...",
         key="text_input"
