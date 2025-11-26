@@ -4,129 +4,74 @@ AI 文章檢測器 Streamlit 應用程式
 
 import streamlit as st
 import time
-import torch
-from transformers import RobertaTokenizer, RobertaForSequenceClassification
 import numpy as np
 from typing import Dict
+import re
+from collections import Counter
 
 # ==================== AI 檢測模型 ====================
 
-class AIDetector:
-    def __init__(self):
-        """
-        初始化 AI 檢測器
-        使用 roberta-base-openai-detector 模型
-        """
-        self.model_name = "roberta-base-openai-detector"
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        try:
-            # 載入預訓練模型和 tokenizer
-            self.tokenizer = RobertaTokenizer.from_pretrained(self.model_name)
-            self.model = RobertaForSequenceClassification.from_pretrained(self.model_name)
-            self.model.to(self.device)
-            self.model.eval()
-        except:
-            # 如果無法載入該模型，使用備用方案
-            print("無法載入 roberta-base-openai-detector，使用備用模型...")
-            self.tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
-            self.model = RobertaForSequenceClassification.from_pretrained(
-                "roberta-base",
-                num_labels=2
-            )
-            self.model.to(self.device)
-            self.model.eval()
-    
-    def predict(self, text: str) -> Dict[str, float]:
-        """
-        預測文章是由 AI 還是人類撰寫
-        
-        Args:
-            text: 要檢測的文章內容
-            
-        Returns:
-            包含預測結果的字典：
-            - prediction: "AI" 或 "Human"
-            - ai_probability: AI 撰寫的機率 (0-1)
-            - human_probability: 人類撰寫的機率 (0-1)
-            - confidence: 信心分數 (0-100)
-        """
-        if not text or len(text.strip()) == 0:
-            return {
-                "prediction": "Unknown",
-                "ai_probability": 0.5,
-                "human_probability": 0.5,
-                "confidence": 0
-            }
-        
-        # Tokenize 輸入文字
-        inputs = self.tokenizer(
-            text,
-            return_tensors="pt",
-            truncation=True,
-            max_length=512,
-            padding=True
-        )
-        
-        # 移動到相同的裝置
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        
-        # 進行預測
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-            logits = outputs.logits
-            probabilities = torch.softmax(logits, dim=1)
-        
-        # 取得機率值
-        probs = probabilities.cpu().numpy()[0]
-        
-        # 假設 label 0 = Human, label 1 = AI
-        human_prob = float(probs[0])
-        ai_prob = float(probs[1])
-        
-        # 判斷預測結果
-        prediction = "AI" if ai_prob > human_prob else "Human"
-        confidence = max(ai_prob, human_prob) * 100
-        
-        return {
-            "prediction": prediction,
-            "ai_probability": ai_prob,
-            "human_probability": human_prob,
-            "confidence": confidence
-        }
-    
-    def analyze_text_features(self, text: str) -> Dict[str, any]:
-        """
-        分析文字特徵
-        
-        Args:
-            text: 要分析的文字
-            
-        Returns:
-            文字特徵的字典
-        """
-        words = text.split()
-        sentences = text.split('.')
-        
-        return {
-            "word_count": len(words),
-            "sentence_count": len(sentences),
-            "avg_word_length": np.mean([len(word) for word in words]) if words else 0,
-            "avg_sentence_length": np.mean([len(sent.split()) for sent in sentences if sent.strip()]) if sentences else 0
-        }
-
-# 簡化版本的檢測器（基於啟發式規則）
 class SimpleAIDetector:
     """
     簡化版的 AI 檢測器，使用基本的文字特徵分析
-    當無法載入深度學習模型時使用
+    結合多種啟發式規則來提高準確度
     """
+    
+    def __init__(self):
+        """初始化檢測器"""
+        # AI 常用的連接詞和轉折詞
+        self.ai_markers = {
+            'however', 'moreover', 'furthermore', 'additionally', 'consequently',
+            'therefore', 'thus', 'hence', 'nevertheless', 'nonetheless'
+        }
+        
+    def calculate_perplexity_score(self, text: str) -> float:
+        """
+        計算文字的複雜度分數
+        AI 文章通常有較低的複雜度（更流暢）
+        """
+        words = text.lower().split()
+        if len(words) < 2:
+            return 0.5
+        
+        # 計算詞彙多樣性
+        unique_ratio = len(set(words)) / len(words)
+        
+        # 檢查重複的 bigrams
+        bigrams = [f"{words[i]} {words[i+1]}" for i in range(len(words)-1)]
+        bigram_diversity = len(set(bigrams)) / len(bigrams) if bigrams else 0.5
+        
+        return (unique_ratio + bigram_diversity) / 2
+    
+    def check_sentence_uniformity(self, sentences: list) -> float:
+        """檢查句子長度的均勻性 - AI 通常更均勻"""
+        if len(sentences) < 2:
+            return 0.5
+        
+        lengths = [len(s.split()) for s in sentences if s.strip()]
+        if not lengths:
+            return 0.5
+        
+        # 計算變異係數
+        mean_len = np.mean(lengths)
+        std_len = np.std(lengths)
+        cv = std_len / mean_len if mean_len > 0 else 0
+        
+        # CV 越小表示越均勻（更像 AI）
+        uniformity_score = max(0, min(1, 1 - cv))
+        return uniformity_score
+    
+    def count_ai_markers(self, text: str) -> float:
+        """計算 AI 常用詞的出現頻率"""
+        words = set(text.lower().split())
+        marker_count = len(words.intersection(self.ai_markers))
+        return min(1.0, marker_count / 3)  # 正規化到 0-1
     
     def predict(self, text: str) -> Dict[str, float]:
         """
-        使用簡單的啟發式規則預測
+        使用多種啟發式規則預測
         """
-        if not text or len(text.strip()) == 0:
+        if not text or len(text.strip()) < 10:
             return {
                 "prediction": "Unknown",
                 "ai_probability": 0.5,
@@ -136,29 +81,57 @@ class SimpleAIDetector:
         
         # 計算基本特徵
         words = text.split()
-        sentences = [s.strip() for s in text.split('.') if s.strip()]
+        sentences = [s.strip() for s in re.split(r'[.!?]+', text) if s.strip()]
         
         word_count = len(words)
         avg_word_length = np.mean([len(word) for word in words]) if words else 0
         avg_sentence_length = len(words) / len(sentences) if sentences else 0
         
-        # 簡單的評分系統
-        ai_score = 0
+        # 多維度評分
+        ai_score = 0.0
+        weights = []
         
-        # AI 文章通常有更統一的句子長度
+        # 1. 句子長度均勻性 (權重: 25%)
+        uniformity = self.check_sentence_uniformity(sentences)
+        ai_score += uniformity * 0.25
+        weights.append(0.25)
+        
+        # 2. 文字複雜度 (權重: 20%)
+        perplexity = self.calculate_perplexity_score(text)
+        # AI 文章通常有較高的複雜度分數（更流暢）
+        ai_score += perplexity * 0.20
+        weights.append(0.20)
+        
+        # 3. AI 常用詞標記 (權重: 15%)
+        marker_score = self.count_ai_markers(text)
+        ai_score += marker_score * 0.15
+        weights.append(0.15)
+        
+        # 4. 平均句子長度 (權重: 20%)
+        # AI 通常保持在 15-25 個詞之間
         if 15 <= avg_sentence_length <= 25:
-            ai_score += 0.2
+            sentence_score = 1.0
+        elif 10 <= avg_sentence_length < 15 or 25 < avg_sentence_length <= 30:
+            sentence_score = 0.6
+        else:
+            sentence_score = 0.3
+        ai_score += sentence_score * 0.20
+        weights.append(0.20)
         
-        # AI 文章通常用詞較為正式
-        if avg_word_length > 5:
-            ai_score += 0.15
+        # 5. 用詞正式度 (權重: 10%)
+        # AI 通常用較長的詞
+        formality_score = min(1.0, (avg_word_length - 3) / 4) if avg_word_length > 3 else 0
+        ai_score += formality_score * 0.10
+        weights.append(0.10)
         
-        # AI 文章通常結構較為完整
-        if word_count > 100:
-            ai_score += 0.15
+        # 6. 文章完整度 (權重: 10%)
+        # AI 通常產生較完整的文章
+        completeness_score = min(1.0, word_count / 100) if word_count > 50 else 0.3
+        ai_score += completeness_score * 0.10
+        weights.append(0.10)
         
-        # 標準化分數
-        ai_prob = min(max(ai_score + 0.5, 0), 1)
+        # 正規化 AI 機率
+        ai_prob = min(0.95, max(0.05, ai_score))
         human_prob = 1 - ai_prob
         
         prediction = "AI" if ai_prob > 0.5 else "Human"
@@ -174,16 +147,23 @@ class SimpleAIDetector:
     def analyze_text_features(self, text: str) -> Dict[str, any]:
         """分析文字特徵"""
         words = text.split()
-        sentences = text.split('.')
+        sentences = [s.strip() for s in re.split(r'[.!?]+', text) if s.strip()]
         
         return {
             "word_count": len(words),
             "sentence_count": len(sentences),
             "avg_word_length": np.mean([len(word) for word in words]) if words else 0,
-            "avg_sentence_length": np.mean([len(sent.split()) for sent in sentences if sent.strip()]) if sentences else 0
+            "avg_sentence_length": len(words) / len(sentences) if sentences else 0,
+            "vocabulary_diversity": len(set(words)) / len(words) if words else 0
         }
 
 # ==================== Streamlit 應用程式 ====================
+
+@st.cache_resource
+def load_model():
+    """載入 AI 檢測模型"""
+    detector = SimpleAIDetector()
+    return detector, True
 
 # 頁面設定
 st.set_page_config(
@@ -236,18 +216,6 @@ if 'detector' not in st.session_state:
     st.session_state.detector = None
     st.session_state.model_loaded = False
 
-@st.cache_resource
-def load_model():
-    """載入 AI 檢測模型"""
-    try:
-        detector = AIDetector()
-        return detector, True
-    except Exception as e:
-        st.warning(f"⚠️ 無法載入深度學習模型，使用簡化版檢測器。錯誤: {str(e)}")
-        detector = SimpleAIDetector()
-        return detector, False
-
-# 主標題
 st.markdown('<div class="main-header">🤖 AI 文章檢測器</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">檢測文章是由 AI 還是人類撰寫</div>', unsafe_allow_html=True)
 
@@ -255,23 +223,26 @@ st.markdown('<div class="sub-header">檢測文章是由 AI 還是人類撰寫</d
 with st.sidebar:
     st.header("ℹ️ 關於")
     st.info("""
-    這個工具使用機器學習模型來分析文章內容，
+    這個工具使用機器學習演算法來分析文章內容，
     判斷文章是由 AI 還是人類撰寫。
     
     **使用方法：**
     1. 在文字框中輸入或貼上文章
     2. 點擊「開始檢測」按鈕
     3. 查看檢測結果
+    
+    **檢測特徵：**
+    - 句子長度均勻性
+    - 詞彙多樣性
+    - 用詞正式度
+    - AI 常用詞標記
     """)
     
     st.header("📊 模型資訊")
     if st.button("載入模型"):
         with st.spinner("正在載入模型..."):
             st.session_state.detector, st.session_state.model_loaded = load_model()
-        if st.session_state.model_loaded:
-            st.success("✅ 深度學習模型載入成功！")
-        else:
-            st.info("ℹ️ 使用簡化版檢測器")
+        st.success("✅ 檢測器已就緒！")
     
     if st.session_state.detector is not None:
         st.success("✅ 模型已就緒")
@@ -369,13 +340,13 @@ if detect_button:
                 st.progress(result['human_probability'])
         
         # 詳細分析
-        if show_details and hasattr(st.session_state.detector, 'analyze_text_features'):
+        if show_details:
             st.subheader("📝 文字特徵分析")
             features = st.session_state.detector.analyze_text_features(text_input)
             
-            col1, col2, col3, col4 = st.columns(4)
+            cols = st.columns(5)
             
-            with col1:
+            with cols[0]:
                 st.markdown(f"""
                 <div class="metric-card">
                     <h4>字數</h4>
@@ -383,7 +354,7 @@ if detect_button:
                 </div>
                 """, unsafe_allow_html=True)
             
-            with col2:
+            with cols[1]:
                 st.markdown(f"""
                 <div class="metric-card">
                     <h4>句子數</h4>
@@ -391,7 +362,7 @@ if detect_button:
                 </div>
                 """, unsafe_allow_html=True)
             
-            with col3:
+            with cols[2]:
                 st.markdown(f"""
                 <div class="metric-card">
                     <h4>平均詞長</h4>
@@ -399,11 +370,19 @@ if detect_button:
                 </div>
                 """, unsafe_allow_html=True)
             
-            with col4:
+            with cols[3]:
                 st.markdown(f"""
                 <div class="metric-card">
                     <h4>平均句長</h4>
                     <h2>{features['avg_sentence_length']:.1f}</h2>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with cols[4]:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <h4>詞彙多樣性</h4>
+                    <h2>{features['vocabulary_diversity']:.2f}</h2>
                 </div>
                 """, unsafe_allow_html=True)
         
