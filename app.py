@@ -211,10 +211,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 初始化 session state
+# 初始化 session state 並自動載入模型
 if 'detector' not in st.session_state:
-    st.session_state.detector = None
-    st.session_state.model_loaded = False
+    st.session_state.detector, st.session_state.model_loaded = load_model()
 
 st.markdown('<div class="main-header">🤖 AI 文章檢測器</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">檢測文章是由 AI 還是人類撰寫</div>', unsafe_allow_html=True)
@@ -238,16 +237,11 @@ with st.sidebar:
     - AI 常用詞標記
     """)
     
-    st.header("📊 模型資訊")
-    if st.button("載入模型"):
-        with st.spinner("正在載入模型..."):
-            st.session_state.detector, st.session_state.model_loaded = load_model()
-        st.success("✅ 檢測器已就緒！")
-    
+    st.header("📊 模型狀態")
     if st.session_state.detector is not None:
         st.success("✅ 模型已就緒")
     else:
-        st.warning("⚠️ 請先載入模型")
+        st.error("❌ 模型載入失敗")
     
     st.header("📝 範例文章")
     if st.button("載入 AI 文章範例"):
@@ -291,7 +285,7 @@ with col2:
 # 處理檢測
 if detect_button:
     if st.session_state.detector is None:
-        st.error("❌ 請先在側邊欄載入模型！")
+        st.error("❌ 模型載入失敗，請重新整理頁面！")
     elif not text_input or len(text_input.strip()) < 10:
         st.warning("⚠️ 請輸入至少 10 個字元的文章內容")
     else:
